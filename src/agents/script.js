@@ -5,471 +5,270 @@ import { storage } from '../utils/storage.js';
 
 /**
  * Script Agent - 编剧 Agent
- * 基于开源项目 smolagents-video-script-generator 的架构
+ * 基于开源项目: rahulanand1103/youtube-script-writer
  * 
- * 核心功能：
- * 1. 研究规划 - 搜索主题相关内容
- * 2. 脚本生成 - 基于研究生成初稿
- * 3. 脚本打磨 - 优化增强
- * 4. 质量评估 - 评分并反馈
+ * 参考架构:
+ * - LangGraph 状态图工作流
+ * - 多阶段生成: Research → Blueprint → Refined → Script
+ * - YouSearch 互联网搜索
+ * 
+ * 流程:
+ * 1. 研究分析 (Research) - 搜索相关资料
+ * 2. 创建蓝图 (Blueprint) - 规划视频结构
+ * 3. 打磨蓝图 (Refined) - 优化结构
+ * 4. 生成脚本 (Script) - 输出完整脚本
  */
 
-// 默认提示词模板（参考开源项目结构）
-const PROMPTS = {
-  research: {
-    system: 'You are a research expert. Generate focused search queries to gather comprehensive information.',
-    user: `As a research expert, create EXACTLY {count} focused search queries to gather comprehensive information about {topic}.
-    
-Requirements:
-- Generate EXACTLY {count} queries, no more, no less, no less
-- Each query should target a different aspect of the topic
-- Keep queries short (4-6 words) and specific
-- Include a mix of factual, historical, and engaging content
-- Focus on information that would be interesting in a video
-- Avoid redundant or overlapping queries
-
-Format:
-- Return EXACTLY {count} queries, one per line
-- Do not include numbering or bullet points
-- Do not include quotes or special characters
-- Do not include any other text or explanations
-
-Example output (if {count} were 3):
-topic history origins background
-topic major achievements milestones
-topic interesting unknown facts trivia`
-  },
-
-  script: {
-    system: 'You are a professional video script writer. Return ONLY valid JSON.',
-    user: `Create an engaging {format} video script using the provided research data.
-Video Length: {duration} minutes
-Questions: {questions}
-Topic: {topic}
-
-Research Data:
-{research_data}
-
-Requirements:
-1. Create a structured script with clear sections
-2. Include specific timestamps
-3. Write engaging questions and explanations
-4. Add voiceover text
-5. Suggest visual elements
-
-Return a valid JSON object matching this exact structure:
-{
-  "intro_script": "Opening hook and introduction text",
-  "questions": [
-    {
-      "question": "The question text",
-      "answer": "The answer text",
-      "fact": "An interesting related fact",
-      "timestamp": "MM:SS format",
-      "transition": "Transition text to next question"
-    }
-  ],
-  "outro_script": "Closing remarks and call to action",
-  "visual_notes": "Visual suggestions and transitions",
-  "timestamps": {
-    "intro": "MM:SS format",
-    "questions": ["MM:SS format"],
-    "outro": "MM:SS format"
-  }
-}
-
-Important:
-- Return ONLY the JSON object, no markdown, no explanations
-- Ensure all fields match the example structure exactly`
-  },
-
-  polish: {
-    system: 'You are an expert in social media engagement and video optimization. Always return valid JSON.',
-    user: `Enhance this {format} video script for maximum engagement.
-Original Script:
-{original_script}
-
-Requirements:
-1. Improve hook and intro
-2. Enhance transitions between questions
-3. Add engaging facts/context
-4. Optimize for platform ({format})
-5. Include trending hashtags
-6. Enhance visual suggestions
-
-Return a valid JSON object with this exact structure:
-{
-  "intro_script": "Enhanced opening hook",
-  "questions": [
-    {
-      "question": "Enhanced question text",
-      "answer": "Enhanced answer text",
-      "fact": "Enhanced interesting fact",
-      "timestamp": "MM:SS format",
-      "transition": "Enhanced transition text"
-    }
-  ],
-  "outro_script": "Enhanced closing remarks",
-  "visual_notes": "Enhanced visual suggestions",
-  "timestamps": {
-    "intro": "MM:SS format",
-    "questions": ["MM:SS format"],
-    "outro": "MM:SS format"
-  },
-  "hashtags": ["list", "of", "hashtags"],
-  "engagement_notes": "Platform-specific engagement tips"
-}
-
-Important:
-- Return ONLY valid JSON, no markdown code blocks
-- Ensure all fields are present and match structure`
-  },
-
-  evaluate: {
-    system: 'You are an expert content evaluator. Return valid JSON with scores.',
-    user: `Evaluate this {format} video script for quality and engagement potential.
-
-Script to evaluate:
-{script}
-
-Score each criterion from 0-10:
-1. Comprehensiveness: How well does it cover all aspects?
-2. Relevance: How relevant is the content to the topic?
-3. Credibility: How reliable are the sources?
-4. Engagement: How engaging is the content?
-5. Topic coverage: How well does it cover the specific topic?
-
-Provide specific, actionable feedback and list 3-5 concrete improvement suggestions.
-
-Return valid JSON exactly like this:
-{
-  "scores": {
-    "comprehensiveness": 0-10,
-    "relevance": 0-10,
-    "credibility": 0-10,
-    "engagement": 0-10,
-    "coverage": 0-10
-  },
-  "total_score": 0-10 average,
-  "feedback": "Detailed feedback text",
-  "improvement_suggestions": ["suggestion 1", "suggestion 2", "suggestion 3", "suggestion 4", "suggestion 5"]
-}`
-  }
+const VIDEO_TYPES = {
+  documentary: { name: '纪录片', sections: 4, tone: '专业、权威' },
+  short: { name: '短视频', sections: 3, tone: '活泼、吸引人' },
+  narration: { name: '解说视频', sections: 5, tone: '娓娓道来、有深度' }
 };
 
-/**
- * 研究规划器
- */
-async function planResearch(topic, count = 5) {
-  logger.agent('Script Agent', `📊 规划搜索查询 (${count}个)...`);
-  
-  const prompt = PROMPTS.research.user
-    .replace('{count}', count.toString())
-    .replace('{topic}', topic);
-
-  const queries = await callLLM([
-    { role: 'system', content: PROMPTS.research.system },
-    { role: 'user', content: prompt }
-  ]);
-
-  // 解析查询结果
-  return queries
-    .split('\n')
-    .map(q => q.trim())
-    .filter(q => q && !q.startsWith('-') && !q.match(/^\d/))
-    .slice(0, count);
-}
+const TONES = [
+  '专业权威', '轻松活泼', '幽默风趣', '严肃认真', 
+  '温暖亲切', '理性分析', '激情澎湃', '娓娓道来'
+];
 
 /**
- * 模拟 LLM 调用
- * 后续可接入真实 API
+ * 研究分析师
+ * 参考: youtube-script-writer/src/internet_research/researcher.py
  */
-async function callLLM(messages, options = {}) {
-  const hasApiKey = process.env.OPENAI_API_KEY && 
-                    process.env.OPENAI_API_KEY !== 'your-api-key-here';
-
-  if (hasApiKey) {
-    // TODO: 接入真实 OpenAI API
-    return mockLLMResponse(messages);
+class ResearchAnalyst {
+  constructor() {
+    this.name = 'Research Analyst';
   }
 
-  return mockLLMResponse(messages);
-}
-
-/**
- * 模拟 LLM 响应（用于测试）
- */
-async function mockLLMResponse(messages) {
-  const lastMessage = messages[messages.length - 1]?.content || '';
-  
-  // 模拟研究查询
-  if (lastMessage.includes('search queries') || lastMessage.includes('Research')) {
-    return `topic history origins background
-topic major developments breakthroughs
-topic real world applications uses
-topic interesting facts secrets
-topic future predictions trends`;
+  /**
+   * 生成研究问题
+   * 参考: _generate_question()
+   */
+  async generateQuestions(topic, sectionInfo, previousQuestions = []) {
+    logger.agent('Script', `   🔍 生成研究问题...`);
+    
+    // TODO: 接入 LLM 生成研究问题
+    // const prompt = `
+    //   Section: ${sectionInfo.title}
+    //   Description: ${sectionInfo.description}
+    //   Previous Questions: ${previousQuestions.join(', ') || 'None'}
+    // `;
+    // const question = await llm.call(prompt);
+    
+    // 模拟返回
+    const questions = [
+      `${topic}的历史背景是什么？`,
+      `${topic}的核心技术有哪些？`,
+      `${topic}有哪些实际应用案例？`
+    ];
+    
+    return questions;
   }
 
-  // 模拟脚本生成
-  if (lastMessage.includes('Create an engaging') || lastMessage.includes('script')) {
-    return JSON.stringify({
-      intro_script: '欢迎观看本期节目！今天我们来探讨一个引人入胜的话题。',
-      questions: [
+  /**
+   * 执行互联网搜索
+   * 参考: _internet_search() 使用 YouSearchTool
+   */
+  async searchInternet(question) {
+    logger.agent('Script', `   🌍 搜索: ${question.slice(0, 50)}...`);
+    
+    // TODO: 接入搜索 API
+    // - YouSearchTool (langchain_community)
+    // - Tavily AI
+    // - DuckDuckGo
+    
+    // 模拟搜索结果
+    return {
+      question,
+      results: [
         {
-          question: '这个问题非常重要？',
-          answer: '答案是肯定的！',
-          fact: '这是一个有趣的事实',
-          timestamp: '00:15',
-          transition: '接下来让我们深入了解'
-        },
-        {
-          question: '第二个问题是什么？',
-          answer: '这是第二个答案',
-          fact: '这是另一个有趣的事实',
-          timestamp: '00:30',
-          transition: '让我们继续'
+          title: `关于${question}的研究`,
+          content: `这是关于"${question}"的相关内容...`,
+          url: 'https://example.com'
         }
-      ],
-      outro_script: '以上就是本期节目的全部内容，感谢观看！',
-      visual_notes: '建议使用图表、动画和素材剪辑',
-      timestamps: {
-        intro: '00:00',
-        questions: ['00:15', '00:30'],
-        outro: '00:45'
-      }
-    });
-  }
-
-  // 模拟打磨
-  if (lastMessage.includes('Enhance') || lastMessage.includes('engagement')) {
-    return JSON.stringify({
-      intro_script: '🔥 惊人发现！这个话题你一定要知道！',
-      questions: [
-        {
-          question: '🔥 这个问题你可能从没听过？',
-          answer: '答案是...太不可思议了！',
-          fact: '震惊的事实：大多数人不知道这个！',
-          timestamp: '00:15',
-          transition: '但这还不是最惊人的...'
-        }
-      ],
-      outro_script: '如果觉得有用，请点赞关注！更多精彩内容下期见！',
-      visual_notes: '使用动态文字、快切、emoji 标注',
-      hashtags: ['#话题', '#科普', '#涨知识', '#必看'],
-      engagement_notes: '开头用悬念抓住注意力，结尾引导互动'
-    });
-  }
-
-  // 模拟评估
-  if (lastMessage.includes('Evaluate') || lastMessage.includes('Score')) {
-    return JSON.stringify({
-      scores: {
-        comprehensiveness: 7.5,
-        relevance: 8.0,
-        credibility: 7.0,
-        engagement: 8.5,
-        coverage: 7.5
-      },
-      total_score: 7.7,
-      feedback: '脚本整体质量不错，有较好的结构和吸引力。建议加强事实核查，增加互动元素。',
-      improvement_suggestions: [
-        '添加更多数据支撑',
-        '增加观众互动引导',
-        '优化开头3秒的吸引力',
-        '添加字幕动画效果',
-        '加入热点话题关联'
       ]
-    });
+    };
   }
 
-  return '模拟响应';
-}
-
-/**
- * 生成脚本
- */
-async function generateScript(topic, type = 'documentary', duration = 180) {
-  logger.agent('Script Agent', `📝 开始生成脚本...`);
-  
-  const format = type === 'short' ? 'TikTok' : type === 'narration' ? 'YouTube' : 'Documentary';
-  const questions = type === 'short' ? 3 : type === 'narration' ? 5 : 4;
-
-  // 阶段1: 研究规划
-  logger.agent('Script Agent', `🔍 阶段1: 研究规划`);
-  const searchQueries = await planResearch(topic, 5);
-  logger.info(`   生成 ${searchQueries.length} 个搜索查询`);
-  
-  // 模拟搜索结果（实际应用中会调用搜索API）
-  const researchData = await simulateResearch(searchQueries, topic);
-
-  // 阶段2: 脚本生成
-  logger.agent('Script Agent', `✍️ 阶段2: 生成初稿`);
-  const scriptPrompt = PROMPTS.script.user
-    .replace('{format}', format)
-    .replace('{duration}', (duration / 60).toString())
-    .replace('{questions}', questions.toString())
-    .replace('{topic}', topic)
-    .replace('{research_data}', researchData);
-
-  const rawScript = await callLLM([
-    { role: 'system', content: PROMPTS.script.system },
-    { role: 'user', content: scriptPrompt }
-  ]);
-
-  let initialScript;
-  try {
-    initialScript = JSON.parse(rawScript);
-  } catch (e) {
-    logger.warn('   脚本解析失败，使用默认结构');
-    initialScript = createDefaultScript(topic);
-  }
-
-  // 阶段3: 打磨优化
-  logger.agent('Script Agent', `✨ 阶段3: 打磨优化`);
-  const polishPrompt = PROMPTS.polish.user
-    .replace('{format}', format)
-    .replace('{original_script}', JSON.stringify(initialScript));
-
-  const polishedRaw = await callLLM([
-    { role: 'system', content: PROMPTS.polish.system },
-    { role: 'user', content: polishPrompt }
-  ]);
-
-  let polishedScript;
-  try {
-    polishedScript = JSON.parse(polishedRaw);
-  } catch (e) {
-    logger.warn('   打磨解析失败，使用初稿');
-    polishedScript = initialScript;
-  }
-
-  // 阶段4: 质量评估
-  logger.agent('Script Agent', `📊 阶段4: 质量评估`);
-  const evalPrompt = PROMPTS.evaluate.user
-    .replace('{format}', format)
-    .replace('{script}', JSON.stringify(polishedScript));
-
-  const evalRaw = await callLLM([
-    { role: 'system', content: PROMPTS.evaluate.system },
-    { role: 'user', content: evalPrompt }
-  ]);
-
-  let evaluation;
-  try {
-    evaluation = JSON.parse(evalRaw);
-  } catch (e) {
-    evaluation = { total_score: 7.0, feedback: '评估完成' };
-  }
-
-  // 转换为我们熟悉的格式
-  const finalScript = convertToOutputFormat(polishedScript, topic, type, duration);
-
-  logger.agent('Script Agent', `✅ 脚本生成完成 (评分: ${evaluation.total_score}/10)`);
-
-  return {
-    script: finalScript,
-    evaluation,
-    searchQueries,
-    metadata: {
-      format,
-      questions,
-      duration,
-      topic
+  /**
+   * 执行完整的研究流程
+   * 参考: run() 使用 StateGraph
+   */
+  async research(topic, sectionInfo) {
+    logger.agent('Script', `   📊 开始研究: ${sectionInfo.title}`);
+    
+    const questions = await this.generateQuestions(topic, sectionInfo);
+    const researchData = [];
+    
+    for (const question of questions) {
+      const result = await this.searchInternet(question);
+      researchData.push(result);
     }
-  };
+    
+    return researchData;
+  }
 }
 
 /**
- * 模拟研究搜索
+ * 蓝图创建器
+ * 参考: youtube-script-writer/src/blueprint/create_blueprint.py
  */
-async function simulateResearch(queries, topic) {
-  // 模拟获取搜索结果
-  return `
-关于"${topic}"的研究资料：
-
-1. 历史背景：该话题起源于20世纪，经过多年发展已成为重要领域。
-
-2. 关键技术：包括核心技术1、技术2和技术3，这些技术推动了整个领域的进步。
-
-3. 应用场景：广泛应用于行业A、行业B和行业C，给社会带来深远影响。
-
-4. 发展趋势：未来几年将朝着更智能、更高效的方向发展。
-
-5. 趣味知识：这个领域有很多有趣的冷知识，比如...。
-`;
-}
-
-/**
- * 创建默认脚本
- */
-function createDefaultScript(topic) {
-  return {
-    intro_script: `欢迎观看本期节目，今天我们来了解${topic}。`,
-    questions: [
-      {
-        question: `${topic}是什么？`,
-        answer: `${topic}是一个重要的概念。`,
-        fact: '这是一个有趣的事实',
-        timestamp: '00:20',
-        transition: '让我们继续了解'
-      }
-    ],
-    outro_script: `以上就是关于${topic}的介绍，感谢观看！`,
-    visual_notes: '使用素材和文字动画',
-    timestamps: { intro: '00:00', questions: ['00:20'], outro: '00:40' }
-  };
-}
-
-/**
- * 转换为输出格式
- */
-function convertToOutputFormat(script, topic, type, duration) {
-  // 提取场景
-  const scenes = [];
-  
-  // 开场
-  scenes.push({
-    id: 1,
-    description: script.visual_notes || '开场画面',
-    narration: script.intro_script,
-    duration: 15,
-    assets_needed: ['开场画面', '背景音乐']
-  });
-
-  // 问题场景
-  if (script.questions && script.questions.length > 0) {
-    script.questions.forEach((q, i) => {
-      scenes.push({
-        id: i + 2,
-        description: `问题${i + 1}相关素材`,
-        narration: `${q.question}\n${q.answer}`,
-        duration: Math.floor((duration - 30) / (script.questions.length || 1)),
-        assets_needed: ['相关素材', '过渡动画']
-      });
-    });
+class BlueprintCreator {
+  constructor() {
+    this.name = 'Blueprint Creator';
   }
 
-  // 结尾
-  scenes.push({
-    id: scenes.length + 1,
-    description: '结尾画面',
-    narration: script.outro_script,
-    duration: 15,
-    assets_needed: ['结尾画面', '关注引导']
-  });
+  /**
+   * 创建视频蓝图
+   * 参考: 结构化输出 schema
+   */
+  async createBlueprint(topic, videoType, duration, tone) {
+    logger.agent('Script', `   📋 创建视频蓝图...`);
+    
+    // TODO: 接入 LLM 生成结构化蓝图
+    // const schema = {
+    //   title: string,
+    //   sections: [{ title, description, time, pointers }],
+    //   targetAudience: string,
+    //   keyMessages: [string]
+    // };
+    
+    // 模拟蓝图
+    const typeConfig = VIDEO_TYPES[videoType] || VIDEO_TYPES.documentary;
+    const sections = [];
+    
+    // 生成默认章节
+    const sectionNames = ['开场引入', '核心内容', '案例分析', '总结收尾'];
+    const sectionTime = Math.floor(duration / sectionNames.length);
+    
+    for (let i = 0; i < sectionNames.length; i++) {
+      sections.push({
+        section_title: sectionNames[i],
+        description: `第${i + 1}部分内容介绍`,
+        time: `${Math.floor(i * sectionTime / 60)}:${String(i * sectionTime % 60).padStart(2, '0')}`,
+        pointers: [`要点${i + 1}1`, `要点${i + 1}2`]
+      });
+    }
+    
+    return {
+      title: topic,
+      type: videoType,
+      duration,
+      tone,
+      sections,
+      targetAudience: '普通观众',
+      keyMessages: ['核心观点1', '核心观点2', '核心观点3']
+    };
+  }
+}
 
-  return {
-    title: `${topic} - ${type === 'documentary' ? '纪录片' : type === 'short' ? '短视频' : '解说视频'}`,
-    type,
-    duration,
-    scenes,
-    totalDuration: duration,
-    hashtags: script.hashtags || [],
-    engagement_notes: script.engagement_notes || '',
-    timestamps: script.timestamps || {},
-    raw: script
-  };
+/**
+ * 蓝图打磨器
+ * 参考: youtube-script-writer/src/refined_blueprint/refined_blueprint.py
+ */
+class BlueprintRefiner {
+  constructor() {
+    this.name = 'Blueprint Refiner';
+  }
+
+  /**
+   * 打磨优化蓝图
+   */
+  async refineBlueprint(blueprint, researchData) {
+    logger.agent('Script', `   ✨ 打磨优化蓝图...`);
+    
+    // TODO: 基于研究数据优化蓝图
+    // - 融入研究结果
+    // - 调整时间分配
+    // - 优化要点
+    
+    return {
+      ...blueprint,
+      refined: true,
+      researchIntegrated: researchData.length > 0
+    };
+  }
+}
+
+/**
+ * 脚本作家
+ * 参考: youtube-script-writer/src/writer/writer.py
+ */
+class ScriptWriter {
+  constructor() {
+    this.name = 'Script Writer';
+  }
+
+  /**
+   * 生成章节脚本
+   * 参考: _generate_section()
+   */
+  async writeSection(section, researchData, inputs) {
+    logger.agent('Script', `   ✍️ 撰写: ${section.section_title}`);
+    
+    // TODO: 接入 LLM 撰写脚本
+    // const prompt = `
+    //   Video Title: ${inputs.title}
+    //   Section: ${section.section_title}
+    //   Allocated Time: ${section.time}
+    //   Research: ${researchData}
+    //   Tone: ${inputs.tone}
+    // `;
+    
+    // 模拟生成
+    const script = `
+【${section.section_title}】(${section.time})
+
+${section.description}相关的详细内容...
+这里包含解说词的撰写...
+
+要点1: ${section.pointers?.[0] || '核心观点'}
+要点2: ${section.pointers?.[1] || '补充说明'}
+`.trim();
+    
+    return script;
+  }
+
+  /**
+   * 生成完整脚本
+   * 参考: generate()
+   */
+  async writeScript(blueprint, researchData, inputs) {
+    logger.agent('Script', `   📝 开始撰写完整脚本...`);
+    
+    const scripts = [];
+    
+    for (const section of blueprint.sections) {
+      const sectionScript = await this.writeSection(section, researchData, inputs);
+      scripts.push(sectionScript);
+    }
+    
+    // 组装完整脚本
+    const fullScript = {
+      title: blueprint.title,
+      type: blueprint.type,
+      duration: blueprint.duration,
+      tone: blueprint.tone,
+      intro: `【开场】欢迎观看本期节目，今天我们来了解${blueprint.title}...`,
+      sections: scripts,
+      outro: `【结尾】以上就是关于${blueprint.title}的全部内容，感谢观看！`,
+      hashtags: generateHashtags(blueprint.title),
+      metadata: {
+        createdAt: new Date().toISOString(),
+        refined: blueprint.refined,
+        sectionsCount: blueprint.sections.length
+      }
+    };
+    
+    return fullScript;
+  }
+}
+
+/**
+ * 生成相关话题标签
+ */
+function generateHashtags(title) {
+  const keywords = title.split(/[,，\s]+/).slice(0, 3);
+  return keywords.map(k => `#${k}`).concat(['#科普', '#知识分享']);
 }
 
 /**
@@ -479,10 +278,34 @@ class ScriptAgent {
   constructor() {
     this.name = 'Script Agent';
     this.queue = 'script';
+    
+    // 初始化子模块
+    this.researcher = new ResearchAnalyst();
+    this.blueprintCreator = new BlueprintCreator();
+    this.blueprintRefiner = new BlueprintRefiner();
+    this.scriptWriter = new ScriptWriter();
+  }
+
+  /**
+   * 获取视频类型配置
+   */
+  getVideoTypes() {
+    return Object.entries(VIDEO_TYPES).map(([id, config]) => ({
+      id,
+      ...config
+    }));
+  }
+
+  /**
+   * 获取可用语气
+   */
+  getAvailableTones() {
+    return TONES;
   }
 
   /**
    * 生成脚本
+   * 主流程: 研究 → 蓝图 → 打磨 → 撰写
    */
   async generate(projectId, topic, type = 'documentary', duration = 180) {
     const taskId = taskManager.createTask(this.name, 'generate-script', {
@@ -492,45 +315,155 @@ class ScriptAgent {
       duration
     });
 
-    logger.agent(this.name, `📝 正在生成脚本...`, { topic, type, duration });
+    logger.agent(this.name, `📝 开始生成脚本...`, { topic, type, duration });
+    logger.info(`   类型: ${VIDEO_TYPES[type]?.name || type}`);
+    logger.info(`   时长: ${duration}秒`);
 
     try {
-      const result = await generateScript(topic, type, duration);
+      // 输入参数
+      const tone = TONES[0]; // 默认语气
+      const inputs = { topic, title: topic, tone, duration };
+
+      // ===== 阶段1: 研究分析 =====
+      logger.agent(this.name, `🔍 阶段1: 研究分析`);
       
-      // 保存脚本
-      const projectPath = storage.getProjectPath(projectId);
-      const scriptPath = storage.saveScript(projectPath, result.script);
-
-      // 保存研究数据
-      if (result.searchQueries) {
-        storage.writeJSON(projectPath, 'research.json', {
-          queries: result.searchQueries,
-          evaluation: result.evaluation
+      const sectionInfo = {
+        title: '主要内容',
+        description: `关于${topic}的全面介绍`
+      };
+      
+      // 研究多个方面
+      const allResearchData = [];
+      const aspects = ['历史背景', '核心原理', '应用场景', '未来发展'];
+      
+      for (const aspect of aspects) {
+        const research = await this.researcher.research(topic, {
+          title: aspect,
+          description: `${topic}的${aspect}`
         });
+        allResearchData.push(...research);
       }
+      
+      logger.info(`   ✅ 研究完成: ${allResearchData.length} 条资料`);
 
-      // 发送脚本就绪消息
+      // ===== 阶段2: 创建蓝图 =====
+      logger.agent(this.name, `📋 阶段2: 创建蓝图`);
+      
+      const blueprint = await this.blueprintCreator.createBlueprint(
+        topic, type, duration, tone
+      );
+      
+      logger.info(`   ✅ 蓝图创建: ${blueprint.sections.length} 个章节`);
+
+      // ===== 阶段3: 打磨蓝图 =====
+      logger.agent(this.name, `✨ 阶段3: 打磨优化`);
+      
+      const refinedBlueprint = await this.blueprintRefiner.refineBlueprint(
+        blueprint, allResearchData
+      );
+      
+      logger.info(`   ✅ 蓝图打磨完成`);
+
+      // ===== 阶段4: 撰写脚本 =====
+      logger.agent(this.name, `✍️ 阶段4: 撰写脚本`);
+      
+      const script = await this.scriptWriter.writeScript(
+        refinedBlueprint, allResearchData, inputs
+      );
+      
+      logger.info(`   ✅ 脚本撰写完成`);
+
+      // ===== 转换为输出格式 =====
+      const finalScript = this.convertToOutputFormat(script, type, duration);
+      
+      // ===== 保存 =====
+      const projectPath = storage.getProjectPath(projectId);
+      const scriptPath = storage.saveScript(projectPath, finalScript);
+      
+      // 保存研究数据
+      storage.writeJSON(projectPath, 'research.json', {
+        queries: aspects,
+        data: allResearchData,
+        blueprint: refinedBlueprint
+      });
+
+      // 发送完成消息
       messageQueue.send('script-ready', {
         taskId,
         projectId,
-        script: result.script,
+        script: finalScript,
         scriptPath
       });
 
-      taskManager.completeTask(taskId, { script: result.script, scriptPath });
+      taskManager.completeTask(taskId, { script: finalScript, scriptPath });
 
       logger.agent(this.name, `✅ 脚本生成成功`, { 
-        title: result.script.title,
-        scenes: result.script.scenes?.length || 0,
-        score: result.evaluation?.total_score || 'N/A'
+        title: finalScript.title,
+        scenes: finalScript.scenes?.length || 0
       });
 
-      return { success: true, script: result.script, scriptPath, taskId };
+      return { success: true, script: finalScript, scriptPath, taskId };
     } catch (error) {
       logger.error(`❌ 脚本生成失败`, { error: error.message });
       taskManager.failTask(taskId, error.message);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * 转换为标准输出格式
+   */
+  convertToOutputFormat(script, type, duration) {
+    // 从脚本中提取场景
+    const scenes = [];
+    
+    // 开场
+    scenes.push({
+      id: 1,
+      description: '开场画面 - 吸引观众注意',
+      narration: script.intro || `欢迎观看本期节目`,
+      duration: 15,
+      assets_needed: ['开场画面', '背景音乐']
+    });
+    
+    // 中间章节
+    if (script.sections) {
+      script.sections.forEach((section, i) => {
+        // 提取解说词
+        const narrationMatch = section.match(/【[\u4e00-\u9fa5]+】.*?\n\n([\s\S]*?)(?=\n\n【|$)/);
+        const narration = narrationMatch 
+          ? narrationMatch[1].trim() 
+          : section;
+        
+        scenes.push({
+          id: i + 2,
+          description: `第${i + 1}部分内容`,
+          narration: narration.slice(0, 200),
+          duration: Math.floor((duration - 30) / (script.sections.length || 1)),
+          assets_needed: ['相关素材', '过渡动画']
+        });
+      });
+    }
+    
+    // 结尾
+    scenes.push({
+      id: scenes.length + 1,
+      description: '结尾画面 - 总结和呼吁',
+      narration: script.outro || '以上就是全部内容，感谢观看！',
+      duration: 15,
+      assets_needed: ['结尾画面', '关注引导']
+    });
+    
+    return {
+      title: script.title,
+      type,
+      duration,
+      scenes,
+      totalDuration: duration,
+      hashtags: script.hashtags || [],
+      tone: script.tone,
+      metadata: script.metadata
+    };
   }
 }
 

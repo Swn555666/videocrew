@@ -7,46 +7,52 @@ import path from 'path';
 
 /**
  * TTS Agent - 配音 Agent
- * 基于开源项目架构: XTTS-v2, Kokoro, Piper
+ * 基于开源项目: 
+ * - tcsenpai/audiocoqui (XTTS v2 有声书)
+ * - anubhav-n-mishra/xtts-api (XTTS-v2 API)
  * 
- * 支持的 TTS 引擎:
- * 1. XTTS-v2 (Coqui) - 语音克隆，支持17种语言
- * 2. Kokoro - 轻量级，高质量
- * 3. Piper - 本地运行，低延迟
- * 4. Cloudflare Workers AI - 云端 API
- * 5. OpenAI TTS - 官方 API
+ * 支持的引擎:
+ * 1. XTTS-v2 (Coqui) - 语音克隆，17语言
+ * 2. Kokoro - 轻量本地TTS
+ * 3. Piper - 本地低延迟
+ * 4. Cloudflare Workers AI - 云端
+ * 5. OpenAI TTS - 官方API
  */
 
 const TTS_ENGINES = {
   xtts: {
     name: 'XTTS-v2',
     description: 'Coqui 语音克隆，支持17种语言',
-    voice_clone: true,
-    languages: ['en', 'zh', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'hu', 'ko', 'ja', 'hi']
+    voiceClone: true,
+    languages: ['en', 'zh', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'hu', 'ko', 'ja', 'hi'],
+    model: 'tts_models/multilingual/multi-dataset/xtts'
   },
   kokoro: {
     name: 'Kokoro',
     description: '轻量级，本地运行',
-    voice_clone: false,
-    languages: ['en']
+    voiceClone: false,
+    languages: ['en'],
+    requires: 'kokoro pipeline'
   },
   piper: {
     name: 'Piper',
     description: '本地 TTS，低延迟',
-    voice_clone: false,
-    languages: ['en', 'zh']
+    voiceClone: false,
+    languages: ['en', 'zh'],
+    requires: 'piper-tts'
   },
   cloudflare: {
     name: 'Cloudflare Workers AI',
     description: '云端 TTS，无需本地部署',
-    voice_clone: false,
+    voiceClone: false,
     languages: ['en', 'zh']
   },
   openai: {
     name: 'OpenAI TTS',
     description: '官方 TTS API',
-    voice_clone: false,
-    languages: ['en', 'zh']
+    voiceClone: false,
+    languages: ['en'],
+    voices: ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer']
   }
 };
 
@@ -56,32 +62,159 @@ const VOICE_PRESETS = {
   'zh-CN-female-2': { engine: 'cloudflare', voice: 'a2', lang: 'zh-CN', name: '解说女声' },
   'zh-CN-male-1': { engine: 'cloudflare', voice: 'a3', lang: 'zh-CN', name: '清晰男声' },
   'zh-CN-male-2': { engine: 'cloudflare', voice: 'a4', lang: 'zh-CN', name: '解说男声' },
-  
   // 英文语音
   'en-US-female-1': { engine: 'openai', voice: 'alloy', lang: 'en-US', name: 'Smooth Female' },
   'en-US-female-2': { engine: 'openai', voice: 'shimmer', lang: 'en-US', name: 'Bright Female' },
   'en-US-male-1': { engine: 'openai', voice: 'echo', lang: 'en-US', name: 'Deep Male' },
-  'en-US-male-2': { engine: 'openai', voice: 'fable', lang: 'en-US', name: 'Narrative Male' },
-  
-  // 方言/风格
+  'en-US-male-2': { engine: 'openai', voice: 'onyx', lang: 'en-US', name: 'Narrative Male' },
+  // 风格
   'narration': { engine: 'openai', voice: 'nova', lang: 'en-US', name: '专业解说' },
   'documentary': { engine: 'openai', voice: 'onyx', lang: 'en-US', name: '纪录片风格' },
   'short': { engine: 'openai', voice: 'alloy', lang: 'en-US', name: '短视频风格' }
 };
 
 /**
+ * XTTS-v2 TTS
+ * 参考: tcsenpai/audiocoqui, anubhav-n-mishra/xtts-api
+ */
+async function xttsTTS(text, options = {}) {
+  const { speakerWav, language = 'zh', speed = 1.0 } = options;
+  
+  logger.agent('TTS', `   🎤 使用 XTTS-v2 (语音克隆)...`);
+  
+  // TODO: 接入 XTTS-v2
+  // 参考: https://github.com/coqui-ai/TTS
+  //
+  // from TTS.api import TTS
+  // tts = TTS("tts_models/multilingual/multi-dataset/xtts")
+  // tts.tts(
+  //   text=text,
+  //   speaker_wav=speakerWav,  # 克隆用的参考音频
+  //   language=language,
+  //   file_path=outputPath
+  // )
+  
+  // 检查是否有参考音频
+  if (!speakerWav) {
+    logger.warn('   ⚠️ XTTS 需要 speaker_wav 进行语音克隆');
+  }
+  
+  return mockTTS(text, { ...options, engine: 'xtts' });
+}
+
+/**
+ * Kokoro TTS
+ * 轻量级本地 TTS
+ */
+async function kokoroTTS(text, options = {}) {
+  const { voice = 'default', speed = 1.0 } = options;
+  
+  logger.agent('TTS', `   🎤 使用 Kokoro TTS...`);
+  
+  // TODO: 接入 Kokoro
+  // from kokoro import pipeline
+  // p = pipeline(voice)
+  // audio = p.generate(text)
+  
+  return mockTTS(text, { ...options, engine: 'kokoro' });
+}
+
+/**
+ * Piper TTS
+ * 本地低延迟 TTS
+ */
+async function piperTTS(text, options = {}) {
+  const { voice = 'en_US-lessac-medium', speed = 1.0 } = options;
+  
+  logger.agent('TTS', `   🎤 使用 Piper TTS...`);
+  
+  // TODO: 接入 Piper
+  // ffmpeg -i <(piper-tts --model en_US-lessac-medium.onnx --text "Hello") -i audio.mp3 output.wav
+  
+  return mockTTS(text, { ...options, engine: 'piper' });
+}
+
+/**
+ * Cloudflare Workers AI TTS
+ */
+async function cloudflareTTS(text, options = {}) {
+  const { voice = 'a1', speed = 1.0 } = options;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  
+  if (!apiToken || !accountId) {
+    logger.warn('   ⚠️ Cloudflare API 未配置');
+    return mockTTS(text, { ...options, engine: 'cloudflare-fallback' });
+  }
+  
+  logger.agent('TTS', `   🎤 使用 Cloudflare Workers AI...`);
+  
+  // TODO: 接入 Cloudflare Workers AI
+  // const response = await cfAI.run('@cf-speechify/tts-16k', {
+  //   text: text,
+  //   voice: voice
+  // });
+  
+  return mockTTS(text, { ...options, engine: 'cloudflare', voice });
+}
+
+/**
+ * OpenAI TTS API
+ */
+async function openAITTS(text, options = {}) {
+  const { voice = 'alloy', model = 'tts-1', speed = 1.0 } = options;
+  const apiKey = process.env.OPENAI_API_KEY;
+  
+  if (!apiKey || apiKey === 'your-api-key-here') {
+    logger.warn('   ⚠️ OpenAI API 未配置');
+    return mockTTS(text, { ...options, engine: 'openai-fallback' });
+  }
+  
+  logger.agent('TTS', `   🎤 使用 OpenAI TTS (${model})...`);
+  
+  // TODO: 接入 OpenAI TTS API
+  // const response = await openai.audio.speech.create({
+  //   model: 'tts-1',
+  //   voice: voice,
+  //   input: text,
+  //   speed: speed
+  // });
+  // const buffer = await response.arrayBuffer();
+  
+  return mockTTS(text, { ...options, engine: 'openai', voice });
+}
+
+/**
+ * 模拟 TTS（用于测试）
+ */
+function mockTTS(text, options = {}) {
+  const duration = estimateDuration(text, options.speed || 1.0);
+  
+  // 生成模拟音频数据
+  const audioData = Buffer.from(`MOCK_AUDIO_${options.engine || 'mock'}_${Date.now()}`);
+  
+  return {
+    audio: audioData,
+    duration,
+    format: 'mp3',
+    engine: options.engine || 'mock',
+    charCount: text.length
+  };
+}
+
+/**
  * 估算音频时长
  */
 function estimateDuration(text, speed = 1.0) {
-  // 中文平均约 400字/分钟
-  // 英文平均约 150词/分钟
   const isChinese = /[\u4e00-\u9fa5]/.test(text);
   
   let words;
   if (isChinese) {
+    // 中文约 400字/分钟
     words = text.replace(/\s/g, '').length;
     return Math.ceil((words / 400) * 60 / speed);
   } else {
+    // 英文约 150词/分钟
     words = text.split(/\s+/).length;
     return Math.ceil((words / 150) * 60 / speed);
   }
@@ -94,149 +227,21 @@ function preprocessText(text) {
   // 清理多余空白
   text = text.replace(/\s+/g, ' ').trim();
   
-  // 处理特殊字符
-  text = text.replace(/([。！？])\s*/g, '$1\n');
-  
-  // 处理数字
-  text = text.replace(/(\d+)/g, '<say-as interpret-as="cardinal">$1</say-as>');
+  // 处理标点符号
+  text = text.replace(/([。！？.!?])/g, '$1 ');
   
   return text;
 }
 
 /**
- * 模拟 TTS 引擎
- */
-async function mockTTS(text, options = {}) {
-  logger.agent('TTS', `   🎤 模拟 TTS 生成...`);
-  
-  // 模拟处理延迟
-  await new Promise(resolve => setTimeout(resolve, 300));
-  
-  // 生成模拟音频数据
-  const audioData = Buffer.from(`MOCK_AUDIO_${options.voice || 'default'}_${Date.now()}`);
-  
-  return {
-    audio: audioData,
-    duration: estimateDuration(text, options.speed || 1.0),
-    format: 'mp3',
-    engine: options.engine || 'mock'
-  };
-}
-
-/**
- * XTTS-v2 TTS 调用
- * 需安装: pip install TTS
- */
-async function xttsTTS(text, options = {}) {
-  logger.agent('TTS', `   🎤 使用 XTTS-v2...`);
-  
-  try {
-    // TODO: 接入 XTTS-v2
-    // from TTS.api import TTS
-    // tts = TTS("tts_models/multilingual/multi-dataset/xtts")
-    // tts.tts(text=text, speaker_wav=speaker_wav, language=lang)
-    
-    return await mockTTS(text, { ...options, engine: 'xtts' });
-  } catch (error) {
-    logger.warn(`   ⚠️ XTTS-v2 不可用: ${error.message}`);
-    return await mockTTS(text, { ...options, engine: 'xtts-fallback' });
-  }
-}
-
-/**
- * Kokoro TTS 调用
- */
-async function kokoroTTS(text, options = {}) {
-  logger.agent('TTS', `   🎤 使用 Kokoro...`);
-  
-  try {
-    // TODO: 接入 Kokoro TTS
-    // from kokoro import pipeline
-    // pipeline.generate(text, voice)
-    
-    return await mockTTS(text, { ...options, engine: 'kokoro' });
-  } catch (error) {
-    logger.warn(`   ⚠️ Kokoro 不可用: ${error.message}`);
-    return await mockTTS(text, { ...options, engine: 'kokoro-fallback' });
-  }
-}
-
-/**
- * Piper TTS 调用
- */
-async function piperTTS(text, options = {}) {
-  logger.agent('TTS', `   🎤 使用 Piper...`);
-  
-  try {
-    // TODO: 接入 Piper
-    // piper-tts --model en_US-lessac-medium.onnx --text "Hello"
-    
-    return await mockTTS(text, { ...options, engine: 'piper' });
-  } catch (error) {
-    logger.warn(`   ⚠️ Piper 不可用: ${error.message}`);
-    return await mockTTS(text, { ...options, engine: 'piper-fallback' });
-  }
-}
-
-/**
- * Cloudflare Workers AI TTS
- */
-async function cloudflareTTS(text, options = {}) {
-  logger.agent('TTS', `   🎤 使用 Cloudflare Workers AI...`);
-  
-  const voice = options.voice || 'a1';
-  
-  try {
-    // TODO: 接入 Cloudflare Workers AI
-    // const response = await cfAI.run('@cf-speechify/tts-16k', {
-    //   text: text,
-    //   voice: voice
-    // });
-    
-    return await mockTTS(text, { ...options, engine: 'cloudflare', voice });
-  } catch (error) {
-    logger.warn(`   ⚠️ Cloudflare 不可用: ${error.message}`);
-    return await mockTTS(text, { ...options, engine: 'cloudflare-fallback' });
-  }
-}
-
-/**
- * OpenAI TTS API
- */
-async function openAITTS(text, options = {}) {
-  logger.agent('TTS', `   🎤 使用 OpenAI TTS...`);
-  
-  const voice = options.voice || 'alloy';
-  const model = options.model || 'tts-1';
-  
-  // 检查 API Key
-  if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your-api-key-here') {
-    logger.warn('   ⚠️ OpenAI API Key 未配置，使用模拟数据');
-    return await mockTTS(text, { ...options, engine: 'openai', voice });
-  }
-
-  try {
-    // TODO: 接入 OpenAI TTS API
-    // const response = await openai.audio.speech.create({
-    //   model: 'tts-1',
-    //   voice: voice,
-    //   input: text
-    // });
-    
-    return await mockTTS(text, { ...options, engine: 'openai', voice });
-  } catch (error) {
-    logger.warn(`   ⚠️ OpenAI TTS 失败: ${error.message}`);
-    return await mockTTS(text, { ...options, engine: 'openai-fallback' });
-  }
-}
-
-/**
  * 分段处理长文本
+ * 参考: tcsenpai/audiocoqui 的长文本处理
  */
-async function processLongText(text, options = {}, ttsFunction) {
+async function processLongText(text, options, ttsFunction) {
+  const maxLength = 500; // 每段最大字符数
+  
   // 按句子分割
   const sentences = text.split(/[。！？.!?]+/).filter(s => s.trim());
-  const maxLength = 500; // 每段最大字符数
   
   const segments = [];
   let currentSegment = '';
@@ -248,7 +253,7 @@ async function processLongText(text, options = {}, ttsFunction) {
       }
       currentSegment = sentence;
     } else {
-      currentSegment += sentence + (sentence.endsWith('.') ? '' : '');
+      currentSegment += sentence;
     }
   }
   
@@ -268,10 +273,10 @@ async function processLongText(text, options = {}, ttsFunction) {
     }
   }
   
-  // 合并音频
+  // 合并音频（简化处理，实际应该用 FFmpeg 合并）
   return {
     audio: Buffer.concat(audioBuffers),
-    duration: audioBuffers.length * 5, // 估算
+    duration: audioBuffers.length * 3, // 估算
     segments: segments.length,
     format: 'mp3',
     engine: options.engine
@@ -285,22 +290,21 @@ class TTSAgent {
   constructor() {
     this.name = 'TTS Agent';
     this.queue = 'tts';
-    this.defaultEngine = 'mock'; // 默认使用模拟
+    this.defaultEngine = 'mock';
   }
 
   /**
-   * 获取可用的 TTS 引擎
+   * 获取可用的引擎
    */
   getAvailableEngines() {
-    return Object.entries(TTS_ENGINES).map(([key, value]) => ({
-      id: key,
-      ...value,
-      available: false // 实际检查需要运行时
+    return Object.entries(TTS_ENGINES).map(([id, config]) => ({
+      id,
+      ...config
     }));
   }
 
   /**
-   * 获取可用的语音
+   * 获取可用的语音预设
    */
   getAvailableVoices() {
     return Object.entries(VOICE_PRESETS).map(([id, config]) => ({
@@ -315,7 +319,7 @@ class TTSAgent {
   extractNarration(script) {
     if (!script) return '';
     
-    // 如果是结构化脚本
+    // 结构化脚本
     if (script.scenes) {
       return script.scenes
         .map(scene => scene.narration || '')
@@ -323,10 +327,9 @@ class TTSAgent {
         .join('\n\n');
     }
     
-    // 如果是原始文本
+    // 原始文本
     if (typeof script === 'string') return script;
     
-    // 尝试从 various 字段提取
     return script.narration || script.text || script.content || '';
   }
 
@@ -340,8 +343,6 @@ class TTSAgent {
     });
 
     logger.agent(this.name, `🎙️ 开始 TTS 生成`);
-    logger.info(`   引擎: ${options.engine || this.defaultEngine}`);
-    logger.info(`   语音: ${options.voice || '默认'}`);
 
     try {
       // 1. 提取解说词
@@ -351,41 +352,73 @@ class TTSAgent {
         throw new Error('未找到解说词');
       }
       
-      logger.agent(this.name, `📝 提取解说词 ${narrationText.length} 字符`);
+      logger.info(`   📝 解说词: ${narrationText.length} 字符`);
 
       // 2. 预处理文本
       const processedText = preprocessText(narrationText);
-      
-      // 3. 确定使用的引擎
+
+      // 3. 确定引擎
       const engine = options.engine || this.defaultEngine;
+      const voicePreset = VOICE_PRESETS[options.voice] || VOICE_PRESETS['zh-CN-female-1'];
       
+      logger.info(`   引擎: ${TTS_ENGINES[engine]?.name || engine}`);
+      logger.info(`   语音: ${voicePreset.name}`);
+
       // 4. 调用 TTS
-      let result;
       const ttsOptions = {
         ...options,
         engine,
-        speed: options.speed || 1.0
+        voice: voicePreset.voice,
+        speed: options.speed || 1.0,
+        language: voicePreset.lang
       };
 
-      // 根据引擎选择处理方式
-      switch (engine) {
-        case 'xtts':
-          result = await processLongText(processedText, ttsOptions, xttsTTS);
-          break;
-        case 'kokoro':
-          result = await processLongText(processedText, ttsOptions, kokoroTTS);
-          break;
-        case 'piper':
-          result = await processLongText(processedText, ttsOptions, piperTTS);
-          break;
-        case 'cloudflare':
-          result = await processLongText(processedText, ttsOptions, cloudflareTTS);
-          break;
-        case 'openai':
-          result = await processLongText(processedText, ttsOptions, openAITTS);
-          break;
-        default:
-          result = await mockTTS(processedText, ttsOptions);
+      let result;
+
+      if (processedText.length > 500) {
+        // 长文本分段处理
+        logger.info(`   📝 检测到长文本，开始分段处理...`);
+        
+        switch (engine) {
+          case 'xtts':
+            result = await processLongText(processedText, ttsOptions, xttsTTS);
+            break;
+          case 'kokoro':
+            result = await processLongText(processedText, ttsOptions, kokoroTTS);
+            break;
+          case 'piper':
+            result = await processLongText(processedText, ttsOptions, piperTTS);
+            break;
+          case 'cloudflare':
+            result = await processLongText(processedText, ttsOptions, cloudflareTTS);
+            break;
+          case 'openai':
+            result = await processLongText(processedText, ttsOptions, openAITTS);
+            break;
+          default:
+            result = await processLongText(processedText, ttsOptions, mockTTS);
+        }
+      } else {
+        // 短文本直接处理
+        switch (engine) {
+          case 'xtts':
+            result = await xttsTTS(processedText, ttsOptions);
+            break;
+          case 'kokoro':
+            result = await kokoroTTS(processedText, ttsOptions);
+            break;
+          case 'piper':
+            result = await piperTTS(processedText, ttsOptions);
+            break;
+          case 'cloudflare':
+            result = await cloudflareTTS(processedText, ttsOptions);
+            break;
+          case 'openai':
+            result = await openAITTS(processedText, ttsOptions);
+            break;
+          default:
+            result = await mockTTS(processedText, ttsOptions);
+        }
       }
 
       // 5. 保存音频
@@ -406,7 +439,8 @@ class TTSAgent {
       const metadata = {
         projectId,
         engine: result.engine,
-        voice: options.voice || 'default',
+        voice: ttsOptions.voice,
+        voicePreset: options.voice || 'default',
         duration: result.duration,
         format: result.format,
         segments: result.segments || 1,
@@ -433,13 +467,7 @@ class TTSAgent {
         engine: result.engine
       });
 
-      return { 
-        success: true, 
-        audioPath, 
-        duration: result.duration,
-        metadata,
-        taskId 
-      };
+      return { success: true, audioPath, duration: result.duration, metadata, taskId };
     } catch (error) {
       logger.error(`❌ TTS 生成失败`, { error: error.message });
       taskManager.failTask(taskId, error.message);

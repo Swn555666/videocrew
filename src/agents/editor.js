@@ -2,15 +2,17 @@ import { logger } from '../core/logger.js';
 import { taskManager } from '../core/taskManager.js';
 import { messageQueue } from '../core/messageQueue.js';
 import { storage } from '../utils/storage.js';
-import { existsSync, writeFileSync, mkdirSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, writeFileSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'fs';
 import path from 'path';
 
 /**
  * Editor Agent - 剪辑 Agent
- * 基于开源项目: FFmpeg
+ * 基于开源项目:
+ * - FFmpeg 命令行自动化
+ * - fast-video-editor (视频合并/剪切)
  * 
  * 功能:
- * 1. 视频合成 - 音频+素材 → 视频
+ * 1. 视频合成 - 音频+素材 → 粗剪视频
  * 2. 字幕烧录 - 视频+字幕 → 最终成片
  * 3. 格式转换 - 支持多种格式
  */
@@ -20,150 +22,210 @@ const VIDEO_TEMPLATES = {
     name: '短视频',
     ratio: '9:16',
     resolution: '1080:1920',
-    duration: { max: 60, typical: 15 }
+    fps: 30,
+    duration: { max: 60 }
   },
   documentary: {
     name: '纪录片',
     ratio: '16:9',
     resolution: '1920:1080',
-    duration: { max: 600, typical: 180 }
+    fps: 30,
+    duration: { max: 600 }
   },
   narration: {
     name: '解说视频',
     ratio: '16:9',
     resolution: '1920:1080',
-    duration: { max: 300, typical: 180 }
+    fps: 30,
+    duration: { max: 300 }
   },
   youtube: {
     name: 'YouTube',
     ratio: '16:9',
     resolution: '1920:1080',
-    duration: { max: 600, typical: 480 }
+    fps: 30,
+    duration: { max: 600 }
   }
 };
+
+/**
+ * FFmpeg 命令构建器
+ * 参考: 各类 FFmpeg 自动化脚本
+ */
+class FFmpegBuilder {
+  /**
+   * 构建合并音视频命令
+   */
+  static mergeAudioVideo(videoInput, audioInput, output) {
+    // ffmpeg -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest output.mp4
+    return [
+      '-i', videoInput,
+      '-i', audioInput,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-shortest',
+      '-y',
+      output
+    ];
+  }
+
+  /**
+   * 构建添加字幕命令
+   */
+  static burnSubtitles(videoInput, subtitleInput, output) {
+    // ffmpeg -i input.mp4 -vf subtitles=subtitle.srt output.mp4
+    return [
+      '-i', videoInput,
+      '-vf', `subtitles=${subtitleInput}`,
+      '-c:a', 'copy',
+      '-y',
+      output
+    ];
+  }
+
+  /**
+   * 构建剪切视频命令
+   */
+  static cutVideo(input, start, duration, output) {
+    // ffmpeg -i input.mp4 -ss 00:00:10 -t 00:00:30 -c copy output.mp4
+    return [
+      '-i', input,
+      '-ss', start,
+      '-t', duration,
+      '-c', 'copy',
+      '-y',
+      output
+    ];
+  }
+
+  /**
+   * 构建拼接视频命令
+   */
+  static concatVideos(inputs, output, format = 'mp4') {
+    // ffmpeg -f concat -safe 0 -i list.txt -c copy output.mp4
+    // 需要先创建临时文件列表
+    return {
+      type: 'concat',
+      inputs,
+      output,
+      format
+    };
+  }
+
+  /**
+   * 构建缩放视频命令
+   */
+  static scaleVideo(input, output, width, height) {
+    // ffmpeg -i input -vf scale=1920:1080 output
+    return [
+      '-i', input,
+      '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+      '-c:a', 'copy',
+      '-y',
+      output
+    ];
+  }
+
+  /**
+   * 构建提取音频命令
+   */
+  static extractAudio(input, output) {
+    // ffmpeg -i input.mp4 -vn -acodec libmp3lame -y output.mp3
+    return [
+      '-i', input,
+      '-vn',
+      '-acodec', 'libmp3lame',
+      '-y',
+      output
+    ];
+  }
+
+  /**
+   * 构建添加水印命令
+   */
+  static addWatermark(input, watermark, output, position = 'overlay=10:10') {
+    // ffmpeg -i input -i watermark -filter_complex overlay=10:10 output
+    return [
+      '-i', input,
+      '-i', watermark,
+      '-filter_complex', position,
+      '-c:a', 'copy',
+      '-y',
+      output
+    ];
+  }
+}
+
+/**
+ * 视频合成器
+ * 参考: fast-video-editor 的合并逻辑
+ */
+class VideoComposer {
+  /**
+   * 从图片和音频合成视频
+   */
+  static async composeFromImagesAndAudio(images, audioPath, outputPath, duration) {
+    logger.agent('Editor', `   🎬 从 ${images.length} 张图片和音频合成视频...`);
+    
+    // TODO: 实际调用 FFmpeg
+    // ffmpeg -framerate 1 -loop 1 -i image%d.jpg -i audio.mp3 \
+    //        -c:v libx264 -t 60 -pix_fmt yuv420p -c:a aac output.mp4
+    
+    // 模拟
+    return mockProcessVideo(outputPath, duration);
+  }
+
+  /**
+   * 从素材列表合成视频
+   */
+  static async composeFromAssets(assets, audioPath, outputPath, template) {
+    logger.agent('Editor', `   🎬 从 ${assets.length} 个素材合成视频...`);
+    
+    // TODO: 实现素材拼接逻辑
+    // 1. 按场景顺序排列素材
+    // 2. 计算每个素材的时长
+    // 3. 调用 FFmpeg concat
+    
+    return mockProcessVideo(outputPath, 60);
+  }
+}
+
+/**
+ * 模拟视频处理
+ */
+function mockProcessVideo(outputPath, duration) {
+  const dir = path.dirname(outputPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  
+  const placeholder = `MOCK_VIDEO_${Date.now()}
+Duration: ${duration}s
+Template: ${path.basename(dir)}
+Created: ${new Date().toISOString()}
+`;
+  
+  writeFileSync(outputPath, placeholder);
+  
+  return {
+    success: true,
+    path: outputPath,
+    duration,
+    format: 'mp4'
+  };
+}
 
 /**
  * 检查 FFmpeg 是否可用
  */
 async function checkFFmpeg() {
   try {
-    // TODO: 实际检查 FFmpeg
+    // TODO: 检查 FFmpeg
     // const result = spawn('ffmpeg', ['-version']);
     return { available: false, version: null };
-  } catch (error) {
+  } catch {
     return { available: false, version: null };
   }
-}
-
-/**
- * 获取视频信息
- */
-async function getVideoInfo(input) {
-  logger.info(`   📹 检查视频: ${input}`);
-  // TODO: 实际调用 FFprobe
-  return {
-    exists: existsSync(input),
-    path: input,
-    size: 0,
-    duration: 0
-  };
-}
-
-/**
- * 模拟视频合成
- */
-async function mockComposeVideo(options = {}) {
-  const { audioPath, assets, outputPath, template } = options;
-  
-  logger.agent('Editor', `   🎬 模拟视频合成...`);
-  
-  // 模拟处理
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  // 创建占位文件
-  const placeholder = `MOCK_VIDEO_${Date.now()}
-Template: ${template || 'default'}
-Audio: ${audioPath || 'none'}
-Assets: ${assets?.length || 0} items
-Created: ${new Date().toISOString()}
-`;
-  
-  return {
-    success: true,
-    path: outputPath,
-    placeholder,
-    format: 'mp4',
-    duration: 60
-  };
-}
-
-/**
- * 模拟字幕烧录
- */
-async function mockBurnSubtitles(videoPath, subtitlePath, outputPath) {
-  logger.agent('Editor', `   🔤 模拟字幕烧录...`);
-  
-  await new Promise(resolve => setTimeout(resolve, 300));
-  
-  const placeholder = `MOCK_VIDEO_WITH_SUBS_${Date.now()}
-Video: ${videoPath}
-Subtitles: ${subtitlePath}
-Created: ${new Date().toISOString()}
-`;
-  
-  return {
-    success: true,
-    path: outputPath,
-    placeholder,
-    format: 'mp4'
-  };
-}
-
-/**
- * FFmpeg 合成视频
- * TODO: 实际实现
- */
-async function ffmpegCompose(options = {}) {
-  const { audioPath, images, outputPath, template, duration } = options;
-  
-  logger.agent('Editor', `   🎬 使用 FFmpeg 合成视频`);
-  
-  // FFmpeg 命令示例:
-  // ffmpeg -framerate 1 -loop 1 -i image.jpg -i audio.mp3 -c:v libx264 -t 60 -pix_fmt yuv420p -c:a aac output.mp4
-  
-  // 目前使用模拟
-  return mockComposeVideo(options);
-}
-
-/**
- * FFmpeg 烧录字幕
- * TODO: 实际实现
- */
-async function ffmpegBurnSubtitles(videoPath, subtitlePath, outputPath) {
-  logger.agent('Editor', `   🔤 使用 FFmpeg 烧录字幕`);
-  
-  // FFmpeg 命令:
-  // ffmpeg -i video.mp4 -vf subtitles=subtitle.srt output.mp4
-  
-  return mockBurnSubtitles(videoPath, subtitlePath, outputPath);
-}
-
-/**
- * 创建占位视频
- */
-async function createPlaceholderVideo(outputPath, duration) {
-  const dir = path.dirname(outputPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  
-  const placeholder = `PLACEHOLDER_VIDEO
-Duration: ${duration}s
-Created: ${new Date().toISOString()}
-`;
-  
-  writeFileSync(outputPath, placeholder);
-  return outputPath;
 }
 
 /**
@@ -180,9 +242,19 @@ class EditorAgent {
    * 初始化
    */
   async init() {
-    const { available } = await checkFFmpeg();
+    const { available, version } = await checkFFmpeg();
     this.ffmpegAvailable = available;
-    logger.info(`🎞️ FFmpeg 状态: ${available ? '✅ 可用' : '⚠️ 不可用（使用模拟）'}`);
+    logger.info(`🎞️ FFmpeg 状态: ${available ? `✅ ${version}` : '⚠️ 不可用（使用模拟）'}`);
+  }
+
+  /**
+   * 获取视频模板
+   */
+  getTemplates() {
+    return Object.entries(VIDEO_TEMPLATES).map(([id, config]) => ({
+      id,
+      ...config
+    }));
   }
 
   /**
@@ -197,10 +269,7 @@ class EditorAgent {
       f.endsWith('.mp3') || f.endsWith('.wav') || f.endsWith('.m4a')
     );
     
-    if (files.length > 0) {
-      return path.join(audioDir, files[0]);
-    }
-    return null;
+    return files.length > 0 ? path.join(audioDir, files[0]) : null;
   }
 
   /**
@@ -209,8 +278,7 @@ class EditorAgent {
   async findAssetsManifest(projectPath) {
     const manifestPath = path.join(projectPath, 'assets-manifest.json');
     if (existsSync(manifestPath)) {
-      const fs = await import('fs');
-      return JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      return JSON.parse(readFileSync(manifestPath, 'utf-8'));
     }
     return null;
   }
@@ -227,10 +295,7 @@ class EditorAgent {
       f.endsWith('.srt') || f.endsWith('.vtt')
     );
     
-    if (files.length > 0) {
-      return path.join(subtitlesDir, files[0]);
-    }
-    return null;
+    return files.length > 0 ? path.join(subtitlesDir, files[0]) : null;
   }
 
   /**
@@ -242,13 +307,10 @@ class EditorAgent {
     if (!existsSync(exportsDir)) return null;
     
     const files = readdirSync(exportsDir).filter(f => 
-      f.endsWith('.mp4') || f.endsWith('.avi')
+      f.startsWith('raw_') && f.endsWith('.mp4')
     );
     
-    if (files.length > 0) {
-      return path.join(exportsDir, files[0]);
-    }
-    return null;
+    return files.length > 0 ? path.join(exportsDir, files[0]) : null;
   }
 
   /**
@@ -270,10 +332,11 @@ class EditorAgent {
       logger.info(`   ✅ 音频: ${audioPath}`);
 
       // 2. 检查素材
-      const assetsManifest = this.findAssetsManifest(projectPath);
-      logger.info(`   ${assetsManifest ? '✅' : '⚠️'} 素材: ${assetsManifest ? '已准备' : '未准备'}`);
+      const assetsManifest = await this.findAssetsManifest(projectPath);
+      const hasAssets = assetsManifest?.assets?.length > 0;
+      logger.info(`   ${hasAssets ? '✅' : '⚠️'} 素材: ${hasAssets ? `${assetsManifest.assets.length} 个` : '未准备'}`);
 
-      // 3. 获取模板设置
+      // 3. 获取模板
       const config = storage.readJSON(projectPath, 'config.json');
       const template = VIDEO_TEMPLATES[config?.type] || VIDEO_TEMPLATES.documentary;
 
@@ -285,31 +348,34 @@ class EditorAgent {
       
       const rawVideoPath = path.join(exportsDir, 'raw_video.mp4');
 
-      let result;
       if (this.ffmpegAvailable) {
-        result = await ffmpegCompose({
-          audioPath,
-          assets: assetsManifest?.assets || [],
-          outputPath: rawVideoPath,
-          template: template.name,
-          duration: config?.duration || 60
-        });
+        // TODO: 实际 FFmpeg 合成
+        // 使用 FFmpeg 从素材合成
+        if (hasAssets) {
+          await VideoComposer.composeFromAssets(
+            assetsManifest.assets,
+            audioPath,
+            rawVideoPath,
+            template
+          );
+        } else {
+          // 无素材，创建占位视频
+          await VideoComposer.composeFromImagesAndAudio(
+            ['placeholder'],
+            audioPath,
+            rawVideoPath,
+            config?.duration || 60
+          );
+        }
       } else {
-        result = await mockComposeVideo({
-          audioPath,
-          assets: assetsManifest?.assets || [],
-          outputPath: rawVideoPath,
-          template: template.name
-        });
+        // 模拟
+        mockProcessVideo(rawVideoPath, config?.duration || 60);
       }
 
-      // 5. 保存视频
-      writeFileSync(rawVideoPath, result.placeholder || Buffer.alloc(0));
-
-      // 6. 更新 manifest
+      // 5. 更新 manifest
       this.saveOutputPath(projectId, 'video', rawVideoPath);
 
-      // 7. 发送完成消息
+      // 6. 发送完成消息
       messageQueue.send('video-ready', {
         taskId,
         projectId,
@@ -352,30 +418,23 @@ class EditorAgent {
       const exportsDir = path.join(projectPath, 'exports');
       const finalPath = path.join(exportsDir, 'final.mp4');
 
-      let result;
-      
       if (subtitlePath && existsSync(subtitlePath)) {
         logger.info(`   📝 字幕: ${subtitlePath}`);
         
         if (this.ffmpegAvailable) {
-          result = await ffmpegBurnSubtitles(rawVideoPath, subtitlePath, finalPath);
+          // TODO: 实际 FFmpeg 烧录字幕
+          // FFmpegBuilder.burnSubtitles(rawVideoPath, subtitlePath, finalPath);
+          mockProcessVideo(finalPath, 60);
         } else {
-          result = await mockBurnSubtitles(rawVideoPath, subtitlePath, finalPath);
+          // 模拟
+          mockProcessVideo(finalPath, 60);
         }
       } else {
-        logger.warn(`   ⚠️ 未找到字幕，跳过烧录`);
-        // 直接复制视频
-        const fs = await import('fs');
-        fs.copyFileSync(rawVideoPath, finalPath);
-        result = { success: true, path: finalPath, format: 'mp4' };
+        logger.warn(`   ⚠️ 未找到字幕，直接复制视频`);
+        copyFileSync(rawVideoPath, finalPath);
       }
 
-      // 3. 保存最终视频
-      if (result.placeholder) {
-        writeFileSync(finalPath, result.placeholder);
-      }
-
-      // 4. 更新 manifest
+      // 3. 更新 manifest
       this.saveOutputPath(projectId, 'finalVideo', finalPath);
 
       taskManager.completeTask(taskId, { finalPath });
