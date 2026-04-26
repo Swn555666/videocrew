@@ -1,186 +1,297 @@
-# 🎬 VideoCrew - AI 多 Agent 视频创作系统
+# VideoCrew - AI 多 Agent 视频创作系统
 
 > 短视频 / 纪录片 / 视频解说 全自动创作流水线
 
-## 1. 概念与愿景
+---
 
-VideoCrew 是一个模块化的多 Agent 协作系统，模拟专业视频制作团队的工作流程：
-- **导演 Agent** - 统筹协调，分配任务
-- **编剧 Agent** - 生成脚本和文案
-- **配音 Agent** - TTS 语音合成
-- **素材 Agent** - 管理视频/图片素材
-- **剪辑 Agent** - FFmpeg 自动化剪辑
-- **字幕 Agent** - Whisper 语音转字幕
-
-每个 Agent 独立运行，通过共享消息队列协作，最终输出完整视频。
-
-## 2. 系统架构
+## 1. 系统架构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    🎬 VideoCrew Core                     │
-│                   (Orchestration Layer)                  │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-    ┌─────────────────────┼─────────────────────┐
-    │                     │                     │
-    ▼                     ▼                     ▼
-┌─────────┐         ┌─────────┐         ┌─────────┐
-│ Script  │         │   TTS   │         │  Asset  │
-│ Agent   │         │  Agent  │         │  Agent  │
-└────┬────┘         └────┬────┘         └────┬────┘
-     │                   │                   │
-     └───────────────────┼───────────────────┘
-                         ▼
-              ┌─────────────────┐
-              │    Editor       │
-              │    Agent        │
-              │   (FFmpeg)     │
-              └────────┬────────┘
-                       │
+┌─────────────────────────────────────────────────────────────────┐
+│                        🎬 VideoCrew                              │
+│                    Multi-Agent Video System                      │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      🎯 Director Agent                           │
+│                     (任务调度 & 流程控制)                         │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │
+│  │ Script  │ │   TTS   │ │  Asset  │ │  Editor │ │ Caption │   │
+│  │ Agent   │ │ Agent   │ │ Agent   │ │ Agent   │ │ Agent   │   │
+│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘   │
+└───────┼──────────┼──────────┼──────────┼──────────┼─────────────┘
+        │          │          │          │          │
+        └──────────┴────┬─────┴──────────┴──────────┘
                        ▼
               ┌─────────────────┐
-              │   Caption       │
-              │   Agent         │
+              │  Message Queue  │
+              │   (事件总线)     │
               └────────┬────────┘
-                       │
                        ▼
               ┌─────────────────┐
-              │   Output        │
-              │   (MP4/SRT)    │
+              │  Task Manager   │
+              │   (任务跟踪)     │
               └─────────────────┘
 ```
 
-## 3. 技术栈
+---
 
-- **Runtime**: Node.js 24+
-- **Agent Framework**: Custom event-driven + OpenAI SDK
-- **Video Processing**: FFmpeg (CLI)
-- **TTS**: Cloudflare Workers AI /外部API
-- **Caption**: OpenAI Whisper API
-- **Package Manager**: npm
+## 2. 核心工作流程
 
-## 4. Agent 详细设计
-
-### 4.1 Director Agent (导演)
-- 接收创作需求（主题/类型/时长）
-- 分解任务，分配给其他 Agent
-- 监控进度，处理错误
-- 最终质量检查
-
-### 4.2 Script Agent (编剧)
-- 输入: 主题 + 视频类型
-- 输出: 结构化脚本 (hook/intro/content/outro)
-- 使用 OpenAI GPT-4 生成
-
-### 4.3 TTS Agent (配音)
-- 输入: 脚本文本
-- 输出: 音频文件 (MP3/WAV)
-- 支持: Cloudflare Workers AI TTS / 外部 API
-
-### 4.4 Asset Agent (素材)
-- 输入: 脚本中的场景描述
-- 输出: 素材路径列表
-- 来源: Pexels/Pixabay API 或本地素材库
-
-### 4.5 Editor Agent (剪辑)
-- 输入: 音频 + 素材列表 + 脚本
-- 输出: 粗剪视频
-- 使用 FFmpeg 自动化拼接
-
-### 4.6 Caption Agent (字幕)
-- 输入: 音频文件
-- 输出: SRT/VTT 字幕文件
-- 使用 Whisper API
-
-## 5. 工作流程
+### 完整流水线 (5阶段)
 
 ```
-1. 用户输入: "帮我做一个关于AI发展的纪录片，3分钟"
-                      ▼
-2. Director 分解任务:
-   - Script Agent: 生成解说词
-   - TTS Agent: 准备配音
-   - Asset Agent: 收集素材
-                      ▼
-3. 并行执行各 Agent
-                      ▼
-4. Editor Agent 剪辑合成
-                      ▼
-5. Caption Agent 生成字幕
-                      ▼
-6. Director 质量检查 → 输出成品
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║   用户输入: "帮我制作一个关于AI发展的纪录片，3分钟"               ║
+║                                                                  ║
+║   ═══════════════════════════════════════════════════════════   ║
+║                                                                  ║
+║   🎯 阶段1: 导演协调                                             ║
+║   ┌────────────────────────────────────────────────────────┐    ║
+║   │ • 接收任务，分解目标                                      │    ║
+║   │ • 创建项目，初始化工作空间                                │    ║
+║   │ • 分配任务给各个 Agent                                    │    ║
+║   └────────────────────────────────────────────────────────┘    ║
+║                              │                                   ║
+║                              ▼                                   ║
+║   🎯 阶段2: 编剧生成脚本                                         ║
+║   ┌────────────────────────────────────────────────────────┐    ║
+║   │ Input:  主题 + 视频类型 + 时长                           │    ║
+║   │ Output: 结构化脚本 JSON                                  │    ║
+║   │         ├── title: 视频标题                             │    ║
+║   │         ├── scenes: [                                   │    ║
+║   │         │   { id, description, narration, assets }     │    ║
+║   │         │ ]                                             │    ║
+║   │         └── totalDuration: 总时长                       │    ║
+║   └────────────────────────────────────────────────────────┘    ║
+║                              │                                   ║
+║          ┌───────────────────┴───────────────────┐             ║
+║          ▼                                       ▼             ║
+║   ═══════════════════════    ═══════════════════════════════   ║
+║                                                                  ║
+║   🎯 阶段3a: TTS配音生成         🎯 阶段3b: 素材收集             ║
+║   ┌────────────────────┐      ┌────────────────────┐           ║
+║   │ Input:  脚本文本     │      │ Input:  素材需求列表│           ║
+║   │ Output: 音频文件.mp3 │      │ Output: 素材清单   │           ║
+║   │                    │      │         + 下载路径 │           ║
+║   │ • 提取解说词        │      │                    │           ║
+║   │ • 调用 TTS API     │      │ • 搜索素材库       │           ║
+║   │ • 生成语音文件      │      │ • 下载素材         │           ║
+║   └────────────────────┘      └────────────────────┘           ║
+║                │                         │                      ║
+║                └────────────┬────────────┘                      ║
+║                             │                                   ║
+║                             ▼                                   ║
+║   ═══════════════════════════════════════════════════════════   ║
+║                                                                  ║
+║   🎯 阶段4: 剪辑合成                                             ║
+║   ┌────────────────────────────────────────────────────────┐    ║
+║   │ Input:  音频 + 素材清单                                  │    ║
+║   │ Output: 粗剪视频 .mp4                                    │    ║
+║   │                                                          │    ║
+║   │ • 按场景拼接素材                                         │    ║
+║   │ • 合成音频轨道                                           │    ║
+║   │ • 输出粗剪版本                                           │    ║
+║   └────────────────────────────────────────────────────────┘    ║
+║                              │                                   ║
+║                              ▼                                   ║
+║   ═══════════════════════════════════════════════════════════   ║
+║                                                                  ║
+║   🎯 阶段5: 字幕生成                                             ║
+║   ┌────────────────────────────────────────────────────────┐    ║
+║   │ Input:  音频文件                                         │    ║
+║   │ Output: 字幕文件 .srt                                    │    ║
+║   │                                                          │    ║
+║   │ • Whisper 语音识别                                       │    ║
+║   │ • 生成时间轴                                             │    ║
+║   │ • 输出 SRT 格式                                          │    ║
+║   └────────────────────────────────────────────────────────┘    ║
+║                              │                                   ║
+║                              ▼                                   ║
+║   ═══════════════════════════════════════════════════════════   ║
+║                                                                  ║
+║   🎯 阶段6: 最终合成                                             ║
+║   ┌────────────────────────────────────────────────────────┐    ║
+║   │ Input:  粗剪视频 + 字幕文件                              │    ║
+║   │ Output: 最终成片 .mp4                                   │    ║
+║   │                                                          │    ║
+║   │ • FFmpeg 烧录字幕                                        │    ║
+║   │ • 最终编码输出                                           │    ║
+║   │ • 质量检查                                               │    ║
+║   └────────────────────────────────────────────────────────┘    ║
+║                              │                                   ║
+║                              ▼                                   ║
+║   ═══════════════════════════════════════════════════════════   ║
+║                                                                  ║
+║   ✅ 输出成品:                                                   ║
+║   ┌────────────────────────────────────────────────────────┐    ║
+║   │ project/                                                │    ║
+║   │   ├── script.json      # 剧本                          │    ║
+║   │   ├── audio/           # 配音音频                       │    ║
+║   │   ├── exports/                                             │    ║
+║   │   │   └── final.mp4   # 最终成片                       │    ║
+║   │   └── subtitles/       # 字幕文件                       │    ║
+║   └────────────────────────────────────────────────────────┘    ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
 ```
 
-## 6. 目录结构
+---
+
+## 3. Agent 职责详解
+
+| Agent | 职责 | 输入 | 输出 |
+|-------|------|------|------|
+| **Director** | 统筹调度 | 主题/类型/时长 | 分配任务,协调流程 |
+| **Script** | 脚本生成 | 主题+类型+时长 | 结构化脚本JSON |
+| **TTS** | 配音合成 | 脚本文本 | MP3音频文件 |
+| **Asset** | 素材收集 | 素材需求列表 | 素材清单+文件 |
+| **Editor** | 视频剪辑 | 音频+素材 | 粗剪视频MP4 |
+| **Caption** | 字幕生成 | 音频文件 | SRT字幕文件 |
+
+---
+
+## 4. 任务依赖关系
+
+```
+[Script] ──┬──> [TTS] ──┬──> [Editor] ──> [Caption] ──> [Finalize]
+           │           │
+           └──> [Asset] ┘
+```
+
+**关键点:**
+- Script 完成后才能启动 TTS 和 Asset
+- TTS 和 Asset 可并行执行
+- Editor 需等待 TTS 和 Asset 都完成
+- Caption 依赖 Editor 输出的视频
+
+---
+
+## 5. 事件驱动架构
+
+```javascript
+// Agent 之间通过消息队列通信
+
+// Script 完成 → 通知 Director
+messageQueue.send('script-ready', { script, projectId })
+
+// Director → 触发 TTS 和 Asset 并行
+Promise.all([
+  ttsAgent.generate(),
+  assetAgent.collect()
+])
+
+// TTS/Asset 完成 → 通知 Editor
+messageQueue.send('tts-ready', { audioPath })
+messageQueue.send('assets-ready', { assets })
+
+// Editor 完成 → 通知 Caption
+messageQueue.send('video-ready', { videoPath })
+
+// Caption 完成 → 触发最终合成
+messageQueue.send('caption-ready', { subtitlePath })
+
+// 最终合成 → 完成
+messageQueue.send('production-complete', { finalOutput })
+```
+
+---
+
+## 6. 技术栈
+
+| 组件 | 技术 | 用途 |
+|------|------|------|
+| Runtime | Node.js 24+ | 运行环境 |
+| Agent 通信 | Custom Event Queue | 消息传递 |
+| 任务管理 | Task Manager | 状态跟踪 |
+| AI 生成 | OpenAI GPT-4 | 脚本生成 |
+| 语音合成 | Cloudflare TTS / ElevenLabs | 配音 |
+| 语音转写 | OpenAI Whisper | 字幕 |
+| 视频处理 | FFmpeg | 剪辑/合成 |
+| 素材源 | Pexels / Pixabay API | 素材获取 |
+
+---
+
+## 7. 目录结构
 
 ```
 videocrew/
 ├── src/
 │   ├── agents/
-│   │   ├── director.js      # 导演 Agent
-│   │   ├── script.js        # 编剧 Agent
-│   │   ├── tts.js           # 配音 Agent
-│   │   ├── asset.js         # 素材 Agent
-│   │   ├── editor.js        # 剪辑 Agent
-│   │   └── caption.js       # 字幕 Agent
+│   │   ├── director.js      # 导演 Agent (调度中心)
+│   │   ├── script.js       # 编剧 Agent (GPT-4)
+│   │   ├── tts.js          # 配音 Agent (TTS)
+│   │   ├── asset.js        # 素材 Agent (Pexels)
+│   │   ├── editor.js      # 剪辑 Agent (FFmpeg)
+│   │   └── caption.js     # 字幕 Agent (Whisper)
 │   ├── core/
-│   │   ├── messageQueue.js  # 消息队列
-│   │   ├── taskManager.js   # 任务管理
-│   │   └── logger.js        # 日志
+│   │   ├── logger.js       # 日志系统
+│   │   ├── messageQueue.js # 消息队列
+│   │   └── taskManager.js  # 任务管理
 │   ├── utils/
-│   │   ├── ffmpeg.js        # FFmpeg 封装
-│   │   ├── openai.js       # OpenAI 封装
-│   │   └── storage.js      # 素材存储
-│   ├── config/
-│   │   └── settings.js      # 配置文件
-│   └── index.js             # 入口
-├── workspace/              # 工作目录
-│   ├── projects/           # 项目文件夹
-│   └── assets/             # 临时素材
-├── package.json
-└── README.md
+│   │   ├── openai.js       # OpenAI API
+│   │   ├── ffmpeg.js       # FFmpeg 封装
+│   │   └── storage.js      # 文件存储
+│   └── index.js            # CLI 入口
+├── workspace/
+│   └── projects/          # 项目输出目录
+└── package.json
 ```
 
-## 7. API 集成
+---
 
-### 7.1 OpenAI API
-- 脚本生成
-- Whisper 字幕识别
+## 8. 使用方式
 
-### 7.2 Cloudflare Workers AI
-- TTS (Speechify-TTS)
+```bash
+# 创建纪录片 (默认3分钟)
+videocrew create "人工智能的未来"
 
-### 7.3 Pexels API (可选)
-- 视频素材
+# 创建短视频 (60秒)
+videocrew create "美食教程" --short
 
-## 8. 输出格式
+# 创建解说视频 (5分钟)
+videocrew create "科技解说" --narration
 
+# 自定义时长
+videocrew create "纪录片" --duration=300
+
+# 查看项目列表
+videocrew list
+
+# 查看任务状态
+videocrew tasks
 ```
-project-name/
-├── script.json           # 剧本
-├── audio.mp3             # 配音
-├── video.mp4             # 成片
-├── subtitles.srt         # 字幕
-└── manifest.json         # 项目清单
+
+---
+
+## 9. 扩展指南
+
+### 添加新的 TTS 引擎
+```javascript
+// src/agents/tts.js
+async textToSpeech(text, options) {
+  // 替换为你的 TTS 引擎
+  const audio = await myTTS.convert(text, options);
+  return audio;
+}
 ```
 
-## 9. 待实现 (Roadmap)
+### 添加新的 Agent
+1. 在 `src/agents/` 创建新 Agent 文件
+2. 实现 `generate()` 或 `process()` 方法
+3. 在 `director.js` 中导入并注册
+4. 在流程中调用
 
-- [x] 项目架构设计
-- [ ] 基础 Agent 框架
-- [ ] Director Agent
-- [ ] Script Agent
-- [ ] TTS Agent (Cloudflare)
-- [ ] Asset Agent (Pexels)
-- [ ] Editor Agent (FFmpeg)
-- [ ] Caption Agent (Whisper)
-- [ ] Web UI 界面
-- [ ] 进度监控面板
+---
 
-## 10. 安装要求
+## 10. 待实现功能
 
-- Node.js >= 20.0.0
-- FFmpeg (系统命令)
-- OpenAI API Key
-- Cloudflare API Token (TTS)
+- [ ] FFmpeg 实际视频合成
+- [ ] Cloudflare TTS 接入
+- [ ] Pexels 素材 API 接入
+- [ ] 进度实时展示
+- [ ] Web UI 管理界面
+- [ ] 多语言字幕支持
+- [ ] 批量处理模式

@@ -140,6 +140,13 @@ class Storage {
   }
 
   /**
+   * 检查文件是否存在
+   */
+  exists(filePath) {
+    return existsSync(filePath);
+  }
+
+  /**
    * 清理项目临时文件
    */
   cleanup(projectPath) {
