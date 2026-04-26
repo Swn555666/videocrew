@@ -1,14 +1,15 @@
 # SKILL.md - Asset Agent Skill
 
-> 基于 Pexels API (salvoventura/pypexels) 开源项目架构
+> 基于 Pexels API (salvoventura/pypexels) + Pixabay API 开源项目架构
 
 ## 1. 概述
 
 Asset Agent Skill 负责素材的搜索、下载和管理。
 
-基于 PyPexels 的架构设计，支持：
-- Pexels 视频/图片搜索
-- Pixabay 素材搜索
+支持：
+- Pexels 视频/图片搜索 + 下载
+- Pixabay 素材搜索 + 下载
+- Archive.org 公共领域视频搜索
 - 本地素材库管理
 - 素材分类和标签
 
@@ -21,7 +22,7 @@ asset-agent/
 │   ├── providers/
 │   │   ├── pexels.js        # Pexels API
 │   │   └── pixabay.js       # Pixabay API
-│   ├── downloader.js         # 素材下载
+│   ├── downloader.js         # 素材下载 (支持URL/Pexels/Pixabay/Archive)
 │   ├── classifier.js         # 素材分类
 │   └── storage.js           # 本地存储
 ├── tests/
@@ -48,78 +49,143 @@ class AssetSkill {
 }
 ```
 
-### 3.2 Pexels API
+### 3.2 直接下载
 
 ```javascript
-class PexelsProvider {
-  // 搜索
-  search(query, options)
-  
-  // 获取热门
-  popular(options)
-  
-  // 获取单个
-  getPhoto(id)
-  getVideo(id)
-}
+// 从 URL 下载
+const result = await assetDownloader.downloadFromUrl(url, outputPath);
+
+// 从 asset 对象下载（自动识别来源）
+const result = await assetDownloader.download(asset, outputDir);
 ```
 
-## 4. Pexels API 配置
+### 3.3 平台搜索
 
-### 4.1 端点
+```javascript
+// Pexels 视频搜索
+const { videos } = await assetDownloader.searchPexelsVideos('lion safari');
 
-- 搜索照片: `GET /v1/search`
-- 热门照片: `GET /v1/popular`
-- 搜索视频: `GET /videos/search`
-- 热门视频: `GET /videos/popular`
-- 单个照片: `GET /v1/photos/:id`
-- 单个视频: `GET /videos/videos/:id`
+// Pixabay 视频搜索
+const { videos } = await assetDownloader.searchPixabayVideos('elephant');
 
-### 4.2 参数
+// Archive.org 公共领域视频搜索
+const { videos } = await assetDownloader.searchArchiveVideos('wildlife documentary');
+```
 
-| 参数 | 类型 | 说明 |
+## 4. API 配置
+
+### 4.1 环境变量
+
+```bash
+PEXELS_API_KEY=your_pexels_api_key
+PIXABAY_API_KEY=your_pixabay_api_key
+```
+
+### 4.2 Pexels API
+
+| 端点 | 方法 | 说明 |
 |------|------|------|
-| query | string | 搜索关键词 |
-| per_page | number | 每页数量 (1-100) |
-| page | number | 页码 |
-| orientation | string | horizontal/vertical/square |
-| size | string | large/medium/small |
+| `/v1/search` | GET | 搜索照片 |
+| `/videos/search` | GET | 搜索视频 |
+| `/videos/popular` | GET | 热门视频 |
+
+### 4.3 Pixabay API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/` | GET | 搜索照片 |
+| `/api/videos/` | GET | 搜索视频 |
 
 ## 5. 使用示例
 
-### 5.1 基础搜索
+### 5.1 配置 API Keys
 
-```javascript
-import { AssetSkill } from './src/skill.js';
-
-const skill = new AssetSkill({
-  pexelsApiKey: 'YOUR_PEXELS_API_KEY'
-});
-
-const results = await skill.searchVideos('nature');
-console.log(results);
+```bash
+# .env
+PEXELS_API_KEY=your_key_here
+PIXABAY_API_KEY=your_key_here
 ```
 
-### 5.2 带选项搜索
+### 5.2 搜索并下载视频
 
 ```javascript
-const results = await skill.searchImages('technology', {
-  orientation: 'vertical',
-  size: 'large',
-  perPage: 20
+import { AssetDownloader } from './src/downloader.js';
+
+const downloader = new AssetDownloader({
+  pexelsApiKey: process.env.PEXELS_API_KEY,
+  pixabayApiKey: process.env.PIXABAY_API_KEY
 });
+
+// 搜索 Pexels 视频
+const { videos } = await downloader.searchPexelsVideos('african safari', { perPage: 5 });
+
+// 下载第一个视频
+if (videos.length > 0) {
+  const result = await downloader.download(videos[0], './downloads');
+  console.log('Downloaded:', result.path);
+}
 ```
 
-## 6. 参考开源项目
+### 5.3 从 Archive.org 下载公共领域视频
+
+```javascript
+// Archive.org 不需要 API key
+const { videos } = await downloader.searchArchiveVideos('wildlife nature');
+
+if (videos.length > 0) {
+  const result = await downloader.download(videos[0], './videos');
+  console.log('Downloaded:', result.path);
+}
+```
+
+### 5.4 批量下载
+
+```javascript
+const videos = await downloader.searchPexelsVideos('nature', { perPage: 10 });
+
+const results = await Promise.all(
+  videos.map(video => downloader.download(video, './downloads'))
+);
+
+console.log(`Successfully downloaded: ${results.filter(r => r.success).length}`);
+```
+
+## 6. 免费视频资源
+
+### 6.1 Archive.org 公共领域视频
+
+| 关键词 | 内容类型 |
+|--------|----------|
+| wildlife | 野生动物 |
+| nature documentary | 自然纪录片 |
+| african animals | 非洲动物 |
+| marine life | 海洋生物 |
+| national geographic | 国家地理 |
+
+### 6.2 示例搜索
+
+```javascript
+// 野生动物
+await downloader.searchArchiveVideos('wildlife documentary');
+
+// 海洋生物
+await downloader.searchArchiveVideos('ocean marine life');
+
+// 非洲动物
+await downloader.searchArchiveVideos('african wildlife safari');
+```
+
+## 7. 参考开源项目
 
 **PyPexels** (salvoventura/pypexels)
 - Pexels REST API Python 封装
 - 支持照片和视频搜索
 - 简洁的 API 设计
 
-## 7. 待接入
+## 8. 待接入
 
-- [ ] Pexels API
-- [ ] Pixabay API
+- [x] Pexels API (需要 API key)
+- [x] Pixabay API (需要 API key)
+- [x] Archive.org 公共领域视频
 - [ ] 本地素材库
 - [ ] AI 素材生成
