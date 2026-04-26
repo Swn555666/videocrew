@@ -62,7 +62,7 @@ class AssetAgent {
         total: assetsNeeded.length
       });
 
-      return { success: true, assets: collectedAssets, taskId };
+      return { success: true, assets: collectedAssets, assetsPath: manifestPath, taskId };
     } catch (error) {
       logger.error(`Asset collection failed`, { error: error.message });
       taskManager.failTask(taskId, error.message);
